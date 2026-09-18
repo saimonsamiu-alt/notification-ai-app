@@ -11,6 +11,10 @@ from notification_agent.reply_templates import suggest_reply
 from notification_agent.reply_logger import log_reply
 from notification_agent.integrity_check import verify_integrity
 from notification_agent.safety_monitor import monitor
+from notification_agent.best_picker import rank_messages_in_categories, print_rankings
+from notification_agent.rubric_manager import get_or_create_rubric
+from notification_agent.compare_mode import compare_messages
+from notification_agent.persona_manager import get_or_create_persona, persona_guidance_text
 from notification_agent.sources.email_source import fetch_recent_emails
 from notification_agent.sources.telegram_source import fetch_recent_telegram
 
@@ -39,12 +43,31 @@ def print_dashboard(messages: list[Message]) -> None:
             print(f"[{m.source}] {m.sender} — {title}")
 
 
-def run_once() -> list[Message]:
+def run_once(persona_text: str = "") -> list[Message]:
     all_messages: list[Message] = []
     all_messages.extend(fetch_recent_emails())
     all_messages.extend(fetch_recent_telegram())
-    all_messages = [classify_with_llm(m) for m in all_messages]
+    all_messages = [classify_with_llm(m, persona_text) for m in all_messages]
     return all_messages
+
+
+_feedback_count_since_summary = 0
+
+
+def _acknowledge_feedback(kind: str) -> None:
+    """ইউজার সাজেশন এড়িয়ে গেলে বা বদলে দিলে উষ্ণভাবে স্বীকার করে, বিরক্তিকর না হয়ে।
+    কয়েকবার হলে একটা ছোট সারাংশও দেখায় যে তোমার feedback থেকে শিখছে।"""
+    global _feedback_count_since_summary
+    if kind == "skip":
+        print("ঠিক আছে, বুঝেছি — এটা তোমার জন্য গুরুত্বপূর্ণ না, মনে রাখলাম।")
+    elif kind == "edit":
+        print("বুঝেছি, তোমার নিজের ভাষায় ঠিক করে দিলে — এটাও শিখে রাখছি।")
+
+    _feedback_count_since_summary += 1
+    if _feedback_count_since_summary >= 3:
+        print("\n(তোমার এই ধরনের feedback থেকে আমি ধীরে ধীরে নিজেকে ঠিক করে নিচ্ছি — "
+              "আর কিছু বদলানো দরকার মনে হলে যেকোনো সময় বলো।)\n")
+        _feedback_count_since_summary = 0
 
 
 def handle_replies(important_messages: list[Message]) -> None:
@@ -61,9 +84,13 @@ def handle_replies(important_messages: list[Message]) -> None:
         choice = input("Enter চাপো সাজেস্টেড রিপ্লাই পাঠাতে, নিজের রিপ্লাই লিখতে পারো, অথবা 'skip' লিখো: ").strip()
 
         if choice.lower() == "skip":
+            _acknowledge_feedback("skip")
             continue
 
         actual_reply = choice if choice else suggested
+        if choice and choice.strip() != suggested.strip():
+            _acknowledge_feedback("edit")
+
         monitor.record_action("reply")
         if not monitor.check():
             print(f"\n⚠ SAFE MODE চালু হয়ে গেছে: {monitor.safe_mode_reason}")
@@ -83,6 +110,35 @@ def handle_replies(important_messages: list[Message]) -> None:
         print(f"লগ হলো (এখনো সত্যিকারের প্ল্যাটফর্মে পাঠানো হয়নি, সেটা পরের ফেজে যোগ হবে): {actual_reply}")
 
 
+def offer_compare_mode(rankings: dict, rubric: dict) -> None:
+    """র‍্যাংকিং দেখানোর পর ইউজারকে compare mode ব্যবহারের সুযোগ দেয় (ঐচ্ছিক, স্কিপযোগ্য)।"""
+    if not rankings:
+        return
+    choice = input("\nকোনো ২-৩টা মেসেজ পাশাপাশি তুলনা করে দেখতে চাও? ক্যাটাগরির নাম লিখো, না চাইলে Enter: ").strip()
+    if not choice or choice not in rankings:
+        return
+
+    ranked_list = rankings[choice]
+    print(f"এই ক্যাটাগরিতে: {[(i, r.message.sender) for i, r in enumerate(ranked_list)]}")
+    idx_input = input("কোন কোন নম্বর তুলনা করবে (কমা দিয়ে, যেমন 0,1): ").strip()
+    try:
+        indices = [int(x) for x in idx_input.split(",")]
+        selected = [ranked_list[i].message for i in indices if 0 <= i < len(ranked_list)]
+    except ValueError:
+        print("বুঝতে পারিনি, স্কিপ করা হলো।")
+        return
+
+    if len(selected) < 2:
+        print("তুলনার জন্য অন্তত ২টা দরকার, স্কিপ করা হলো।")
+        return
+
+    result = compare_messages(selected, rubric)
+    if result:
+        print(f"\n===== তুলনা =====\n{result}\n")
+    else:
+        print("তুলনা করা যায়নি (Ollama চালু আছে কিনা দেখো)।")
+
+
 def main() -> None:
     print("নোটিফিকেশন এজেন্ট চালু হচ্ছে...")
 
@@ -100,11 +156,18 @@ def main() -> None:
         print("  ⚠ Telegram কনফিগার করা নেই (.env দেখো) — Telegram স্কিপ করা হবে।")
     print("  (Ollama চালু থাকলে LLM দিয়ে ক্লাসিফাই হবে, না থাকলে rule-based filter ব্যবহার হবে)")
 
+    rubric = get_or_create_rubric()
+    persona = get_or_create_persona()
+    persona_text = persona_guidance_text(persona)
+
     while True:
-        messages = run_once()
+        messages = run_once(persona_text)
         print_dashboard(messages)
         important = [m for m in messages if m.is_important]
         if important:
+            rankings = rank_messages_in_categories(important, rubric)
+            print_rankings(rankings)
+            offer_compare_mode(rankings, rubric)
             handle_replies(important)
         print(f"\n{CHECK_INTERVAL_SECONDS} সেকেন্ড পর আবার চেক করব... (থামাতে Ctrl+C চাপো)")
         try:

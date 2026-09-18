@@ -18,9 +18,20 @@ from notification_agent.models import Message
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL_NAME = "llama3.2:3b"
-TIMEOUT_SECONDS = 15
+TIMEOUT_SECONDS = 60
 
 PROMPT_TEMPLATE = """তুমি একজন সহকারী যে ঠিক করে দাও একটা মেসেজ জরুরি কিনা।
+{persona_section}
+গুরুত্বপূর্ণ নিয়ম — এগুলো সাধারণত জরুরি না, "important": false দেবে:
+- Facebook/Instagram-এর রুটিন নোটিফিকেশন ("X commented", "you have N notifications", friend suggestion)
+- নিউজলেটার, প্রোমোশনাল ইমেইল, মার্কেটিং মেসেজ
+- সাধারণ "welcome" বা automated onboarding মেসেজ
+
+এগুলো সাধারণত জরুরি — "important": true দেবে:
+- আসল মানুষ থেকে সরাসরি ব্যক্তিগত মেসেজ যেখানে জবাবের প্রত্যাশা আছে
+- ডেডলাইন, পেমেন্ট, মিটিং সম্পর্কিত মেসেজ
+- অ্যাকাউন্ট সিকিউরিটি এলার্ট (আসল লগইন এটেম্পট, পাসওয়ার্ড পরিবর্তন) — এগুলো ইউজারের জানা দরকার, কিন্তু রিপ্লাই করার কিছু নেই, তাই "important": true কিন্তু reason-এ লিখবে এটা শুধু জানার জন্য, রিপ্লাই দরকার নেই
+
 নিচের মেসেজটা পড়ো এবং শুধু এই JSON ফরম্যাটে উত্তর দাও, অন্য কিছু লিখো না:
 {{"important": true অথবা false, "reason": "এক লাইনে কারণ"}}
 
@@ -38,12 +49,14 @@ def _is_ollama_available() -> bool:
         return False
 
 
-def classify_with_llm(msg: Message) -> Message:
+def classify_with_llm(msg: Message, persona_text: str = "") -> Message:
     """LLM দিয়ে ক্লাসিফাই করার চেষ্টা করে, সমস্যা হলে rule-based-এ fallback করে।"""
     if not _is_ollama_available():
         return rule_based_classify(msg)
 
+    persona_section = f"\nইউজারের প্রেক্ষাপট: {persona_text}\n" if persona_text else ""
     prompt = PROMPT_TEMPLATE.format(
+        persona_section=persona_section,
         subject=msg.subject or "(নেই)",
         sender=msg.sender,
         body=msg.body[:800],  # প্রম্পট ছোট রাখা, দ্রুত রেসপন্সের জন্য

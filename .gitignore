@@ -1,8 +1,0 @@
-# কখনো কমিট হবে না এই ফাইলগুলো
-.env
-__pycache__/
-*.pyc
-.venv/
-venv/
-*.sqlite3
-data/
