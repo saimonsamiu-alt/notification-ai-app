@@ -15,5 +15,6 @@
   "notification_agent/safety_monitor.py": "abfea7562813db3940fff830a89faa706585ecd4f40b7132e5ea7d25e08dfae2",
   "notification_agent/sources/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "notification_agent/sources/email_source.py": "ff6335cfc8f259ceebf0c146873894539044c38e4d8464de894d0f17c21df283",
-  "notification_agent/sources/telegram_source.py": "f73061a6ae4bdb6551afd6bdd8a43193be8480355e7407d41e580881788a1223"
+  "notification_agent/sources/telegram_source.py": "f73061a6ae4bdb6551afd6bdd8a43193be8480355e7407d41e580881788a1223",
+  "notification_agent/train.py": "141796faa739dcbddb1efccf69793fc163cce4f7bba27b4ef5b6f12771f1db42"
 }
